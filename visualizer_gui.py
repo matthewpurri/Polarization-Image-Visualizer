@@ -23,6 +23,8 @@ class Application():
         self.img_size = (376, 251)
         self.date = '02/20/2000'
         self.times = ['04:15 PM']
+        self.x0, self.y0 = None, None
+        self.x0_old, self.y0_old = None, None
 
         # Init UI
         self.init_gui()
@@ -242,17 +244,26 @@ class Application():
             self._quit()
 
     def update_plot(self, event):
-        global x0, y0
+        if not self.x0 is None: 
+            self.x0_old = 0
+        else:
+            self.x0_old = self.x0
+
+        if not self.y0 is None: 
+            self.y0_old = 0
+        else:
+            self.y0_old = self.y0
+
         x0 = int(event.y)  # Event swaps x and y
         y0 = int(event.x)
 
-        self.x0, self.y0 = x0, y0
-
         # print('Click registered: {}, {}'.format(x0, y0))
+        self.x0, self.y0 = x0, y0
 
         try:
             self.redraw_sine_fit(x0, y0)
         except KeyError:
+            self.x0, self.y0 = self.x0_old, self.y0_old
             print('Click out of bounds: {}, {}'.format(x0, y0))
 
     def redraw_sine_fit(self, x0, y0):
