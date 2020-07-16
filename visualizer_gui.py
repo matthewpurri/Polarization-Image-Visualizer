@@ -10,6 +10,7 @@ import os
 import pickle
 import numpy as np
 from glob import glob
+from copy import deepcopy
 from PIL import ImageTk, Image
 
 class Application():
@@ -25,6 +26,8 @@ class Application():
         self.times = ['04:15 PM']
         self.x0, self.y0 = None, None
         self.x0_old, self.y0_old = None, None
+        self.phase_mode = False
+        self.cmap = plt.get_cmap('viridis')
 
         # Init UI
         self.init_gui()
@@ -156,9 +159,11 @@ class Application():
 
     def load_sine_fit_parameters(self):
         self.sine_fits = []
+        self.raw_data = []
         for sess_dir in self.img_session_dirs:
             p_data_path = os.path.join(sess_dir, 'raw_data.p')
             raw_data = pickle.load(open(p_data_path, 'rb'))
+            self.raw_data.append(raw_data)
             self.sine_fits.append(raw_data['fit_data'])
 
     def load_display_images(self, mode):
@@ -174,6 +179,11 @@ class Application():
         else:
             print('Invalid image type value: "{}"'.format(mode))
             self._quit()
+
+        if mode == 'phase':
+            self.add_phase_rotator()
+        else:
+            self.delete_phase_rotator()
 
         self.image_paths = [os.path.join(sess_dir, image_type) for sess_dir in self.img_session_dirs]
         self.images = [ImageTk.PhotoImage(Image.open(img_path)) for img_path in self.image_paths]
@@ -196,7 +206,19 @@ class Application():
         self.imgCanvas.grid_forget()
 
         # Update the image with the selected image
-        img = ImageTk.PhotoImage(Image.open(self.image_paths[self.img_num]).resize(self.img_size))
+        if self.phase_mode:
+            og_img = self.raw_data[self.img_num]['phase_img']
+            img = deepcopy(og_img)
+            x, y = np.where((img == 0))
+            update_val = float(self.phaseSpinbox.get())
+            update_val %= 0.9
+            img += float(self.phaseSpinbox.get())
+            img %= 1
+            img[x,y] = 0
+            heat_phase_img = self.cmap(img)[:,:,:3]
+            img = ImageTk.PhotoImage(Image.fromarray((heat_phase_img*255).astype(np.uint8)))
+        else:
+            img = ImageTk.PhotoImage(Image.open(self.image_paths[self.img_num]).resize(self.img_size))
         self.imgCanvas = Canvas(self.imgViewFrame, width=self.img_size[0], height=self.img_size[1], bg='black')
         self.imgCanvas.grid(row=0, column=0, columnspan=50, rowspan=4)
         viewImg = self.imgCanvas.create_image(0, 0, anchor=NW, image=img)
@@ -295,6 +317,18 @@ class Application():
         self.root.destroy()  # this is necessary on Windows to prevent
                         # Fatal Python Error: PyEval_RestoreThread: NULL tstate
 
+    def add_phase_rotator(self):
+        self.phase_mode = True
+        values = [i/10 for i in range(10)]
+        self.phaseSpinbox = Spinbox(self.imgViewFrame, values=values, wrap=False, command=lambda: self.update_image(0))
+        self.phaseSpinbox.grid(row=6, column=46, columnspan=4)
+
+    def delete_phase_rotator(self):
+        try:
+            self.phase_mode = False
+            self.phaseSpinbox.grid_forget()
+        except AttributeError:
+            pass
 
 if __name__ == '__main__':
     root = Tk()
@@ -302,8 +336,5 @@ if __name__ == '__main__':
     app = Application(root)
 
     root.mainloop()
-
-    # Make left and right buttons for image viewing
-    
 
     
