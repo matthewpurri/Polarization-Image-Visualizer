@@ -1,8 +1,7 @@
 import matplotlib
 matplotlib.use('TkAgg')
 import matplotlib.pyplot as plt
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2TkAgg
 from tkinter import *
 from tkinter import filedialog
 
@@ -28,6 +27,9 @@ class Application():
         self.x0_old, self.y0_old = None, None
         self.phase_mode = False
         self.cmap = plt.get_cmap('viridis')
+        self.radius = 5  # value for phase hist larger box
+        self.n_bins = 100
+        self.point_circle = None
 
         # Init UI
         self.init_gui()
@@ -90,6 +92,7 @@ class Application():
         Label(self.optionFrame, text='Iteraction: ', justify=LEFT).grid(row=0, column=0, sticky='w', columnspan=5)
         self.interactMode = IntVar()
         self.interactMode.set(0)
+        self.interact_mode = 'sine-plot'
         sineRadioOpt = Radiobutton(self.optionFrame, text='Sinusoid', variable=self.interactMode, 
                                    value=0, command=lambda: self.update_interact_mode(self.interactMode.get()))
         phaseRadioOpt = Radiobutton(self.optionFrame, text='Phase Hist', variable=self.interactMode, 
@@ -133,10 +136,16 @@ class Application():
         chkpt_dir = os.path.join(img_dir, 'checkpoints')
         self.img_session_dirs = sorted(glob(chkpt_dir + '/*/'))
 
-        # TODO check if a valid directory
+        # check if a valid directory
+        time_path = os.path.join(img_dir, 'times.txt')
+        if not os.path.isfile(time_path):
+            print('FATAL: No time file available.')
+            self._quit()
+        if not os.path.isdir(os.path.join(img_dir, 'images')):
+            print('FATAL: subdirectory "images" was not found.')
+            exit()
 
         # Load time and date information
-        time_path = os.path.join(img_dir, 'times.txt')
         self.times = []
         with open(time_path, 'r') as f:
             for i, line in enumerate(f.readlines()):
@@ -146,10 +155,10 @@ class Application():
                 else:
                     self.times.append(line.split('\n')[0])
 
-        # Load sinusoid fit parameters
+        # load sinusoid fit parameters
         self.load_sine_fit_parameters()
 
-        # Load images and initialize GUI
+        # load images and initialize GUI
         self.update_image_display_type(self.imgDisplayMode.get())
 
         # Enable events
@@ -160,11 +169,13 @@ class Application():
     def load_sine_fit_parameters(self):
         self.sine_fits = []
         self.raw_data = []
+        self.phase_images = []
         for sess_dir in self.img_session_dirs:
             p_data_path = os.path.join(sess_dir, 'raw_data.p')
             raw_data = pickle.load(open(p_data_path, 'rb'))
             self.raw_data.append(raw_data)
             self.sine_fits.append(raw_data['fit_data'])
+            self.phase_images.append(raw_data['phase_img'])
 
     def load_display_images(self, mode):
         
@@ -231,12 +242,14 @@ class Application():
 
     def update_interact_mode(self, val):
         if val == 0:
-            # TODO Sinusoid mode
-            print('Sinusiod mode')
+            # Sinusoid mode
+            self.interact_mode = 'sine-plot'
+            self.redraw_sine_fit(self.x0, self.y0)
         elif val == 1:
-            # TODO Phase Hist mode
+            # Phase Hist mode
             # https://stackoverflow.com/questions/29789554/tkinter-draw-rectangle-using-a-mouse
-            print('Phase histogram mode')
+            self.interact_mode = 'phase-hist'
+            self.redraw_phase_hist(self.x0, self.y0)
         else:
             print('Invalid interaction mode value "{}"'.format(val))
             self._quit()
@@ -283,34 +296,58 @@ class Application():
         self.x0, self.y0 = x0, y0
 
         try:
-            self.redraw_sine_fit(x0, y0)
+            if self.interact_mode == 'sine-plot':
+                self.redraw_sine_fit(x0, y0)
+            elif self.interact_mode == 'phase-hist':
+                self.redraw_phase_hist(x0, y0)
         except KeyError:
             self.x0, self.y0 = self.x0_old, self.y0_old
             print('Click out of bounds: {}, {}'.format(x0, y0))
 
     def redraw_sine_fit(self, x0, y0):
-            # Get plot values
-            sine_fit = self.sine_fits[self.img_num]
-            angles = sine_fit[x0, y0]['angles']
-            fit_vals = sine_fit[x0, y0]['fit_values']
-            real_vals = sine_fit[x0, y0]['real_values']
+        # Get plot values
+        sine_fit = self.sine_fits[self.img_num]
+        angles = sine_fit[x0, y0]['angles']
+        fit_vals = sine_fit[x0, y0]['fit_values']
+        real_vals = sine_fit[x0, y0]['real_values']
 
-            # Redraw plot
-            self.ax.clear()
-            self.ax.plot(angles, fit_vals, '*b-')
-            self.ax.plot(angles, real_vals, '*r-')
-            self.ax.set_ylim((-15, 15))
-            self.plotCanvas.draw()
+        # Redraw plot
+        self.ax.clear()
+        self.ax.plot(angles, fit_vals, '*b-')
+        self.ax.plot(angles, real_vals, '*r-')
+        self.ax.set_ylim((-50, 50))
+        self.plotCanvas.draw()
+        self.create_circle()
+
+    def redraw_phase_hist(self, x0, y0):
+        # get phase hist values
+        phase_img = self.phase_images[self.img_num]
+        phase_vals = phase_img[x0-self.radius:x0+self.radius,y0-self.radius:y0+self.radius]
+
+        # redraw phase histogram
+        hist, edges = np.histogram(phase_vals, bins=self.n_bins, range=[0, np.pi+1e-6])
+        hist[0] = 0  # zero-out blank pixels
+        self.ax.clear()
+        self.ax.bar(edges, np.roll(np.append(hist, [0]), 1), width=edges[1])
+        self.plotCanvas.draw()
+        self.create_circle()
 
     def update_image_and_plot_left(self, event):
         # print('Left clicked!')
         self.update_image(-1)
-        self.redraw_sine_fit(self.x0, self.y0)
+        if self.interact_mode == 'sine-plot':
+            self.redraw_sine_fit(self.x0, self.y0)
+        elif self.interact_mode == 'phase-hist': 
+            self.redraw_phase_hist(self.x0, self.y0)
+        self.create_circle()
 
     def update_image_and_plot_right(self, event):
         # print('Right clicked!')
         self.update_image(1)
-        self.redraw_sine_fit(self.x0, self.y0)
+        if self.interact_mode == 'sine-plot':
+            self.redraw_sine_fit(self.x0, self.y0)
+        elif self.interact_mode == 'phase-hist': 
+            self.redraw_phase_hist(self.x0, self.y0)
 
     def _quit(self):
         self.root.quit()     # stops mainloop
@@ -329,6 +366,16 @@ class Application():
             self.phaseSpinbox.grid_forget()
         except AttributeError:
             pass
+
+    def create_circle(self): #center coordinates, radius
+        if not self.point_circle is None:
+            self.imgCanvas.delete(self.point_circle)
+
+        x0 = self.y0 - self.radius
+        y0 = self.x0 - self.radius
+        x1 = self.y0 + self.radius
+        y1 = self.x0 + self.radius
+        self.point_circle = self.imgCanvas.create_oval(x0, y0, x1, y1, fill="green")
 
 if __name__ == '__main__':
     root = Tk()
